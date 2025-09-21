@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -30,9 +32,18 @@ type CertInfo struct {
 }
 
 func NewCertificateManager(maxCacheSize int) (*CertificateManager, error) {
-	rootCA, rootKey, err := generateRootCA()
+	// 먼저 기존 루트 CA 파일이 있는지 확인
+	rootCA, rootKey, err := loadRootCAFromFile()
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate root CA: %v", err)
+		// 파일이 없으면 새로 생성하고 저장
+		rootCA, rootKey, err = generateRootCA()
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate root CA: %v", err)
+		}
+		// 새로 생성한 CA를 파일에 저장
+		if err := saveRootCAToFile(rootCA, rootKey); err != nil {
+			return nil, fmt.Errorf("failed to save root CA: %v", err)
+		}
 	}
 
 	return &CertificateManager{
@@ -232,6 +243,92 @@ func (cm *CertificateManager) ClearCache() {
 	cm.cacheMutex.Lock()
 	defer cm.cacheMutex.Unlock()
 	cm.certCache = make(map[string]*CertInfo)
+}
+
+// loadRootCAFromFile 파일에서 루트 CA를 로드
+func loadRootCAFromFile() (*x509.Certificate, *rsa.PrivateKey, error) {
+	// 프로세스 실행 파일과 같은 디렉토리에 CA 파일 저장
+	execPath, err := os.Executable()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get executable path: %v", err)
+	}
+
+	execDir := filepath.Dir(execPath)
+	certFile := filepath.Join(execDir, "mitm-proxy-ca.pem")
+	keyFile := filepath.Join(execDir, "mitm-proxy-key.pem")
+
+	// 인증서 파일 읽기
+	certPEM, err := os.ReadFile(certFile)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read certificate file: %v", err)
+	}
+
+	// 개인키 파일 읽기
+	keyPEM, err := os.ReadFile(keyFile)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read key file: %v", err)
+	}
+
+	// PEM 블록 파싱
+	certBlock, _ := pem.Decode(certPEM)
+	if certBlock == nil {
+		return nil, nil, fmt.Errorf("failed to decode certificate PEM")
+	}
+
+	keyBlock, _ := pem.Decode(keyPEM)
+	if keyBlock == nil {
+		return nil, nil, fmt.Errorf("failed to decode key PEM")
+	}
+
+	// 인증서 파싱
+	cert, err := x509.ParseCertificate(certBlock.Bytes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse certificate: %v", err)
+	}
+
+	// 개인키 파싱
+	key, err := x509.ParsePKCS1PrivateKey(keyBlock.Bytes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse private key: %v", err)
+	}
+
+	return cert, key, nil
+}
+
+// saveRootCAToFile 루트 CA를 파일에 저장
+func saveRootCAToFile(rootCA *x509.Certificate, rootKey *rsa.PrivateKey) error {
+	// 프로세스 실행 파일과 같은 디렉토리에 CA 파일 저장
+	execPath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get executable path: %v", err)
+	}
+
+	execDir := filepath.Dir(execPath)
+	certFile := filepath.Join(execDir, "mitm-proxy-ca.pem")
+	keyFile := filepath.Join(execDir, "mitm-proxy-key.pem")
+
+	// 인증서를 PEM 형식으로 인코딩
+	certPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: rootCA.Raw,
+	})
+
+	// 개인키를 PEM 형식으로 인코딩
+	keyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(rootKey),
+	})
+
+	// 파일에 저장
+	if err := os.WriteFile(certFile, certPEM, 0644); err != nil {
+		return fmt.Errorf("failed to write certificate file: %v", err)
+	}
+
+	if err := os.WriteFile(keyFile, keyPEM, 0600); err != nil {
+		return fmt.Errorf("failed to write key file: %v", err)
+	}
+
+	return nil
 }
 
 func (cm *CertificateManager) GetCacheSize() int {

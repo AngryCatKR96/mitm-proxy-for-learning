@@ -98,7 +98,19 @@ sudo ./vpn-mitm-proxy \
 
 ## 사용 전 설정
 
-### 1. TUN 디바이스 생성
+### 1. TUN 모듈 로드 확인
+```bash
+# TUN 모듈이 로드되어 있는지 확인
+lsmod | grep tun
+
+# TUN 모듈이 없으면 로드
+sudo modprobe tun
+
+# TUN 디바이스 파일 확인
+ls -la /dev/net/tun
+```
+
+### 2. TUN 디바이스 생성
 ```bash
 # TUN 디바이스 생성
 sudo ip tuntap add dev tun0 mode tun
@@ -110,12 +122,43 @@ sudo ip addr add 10.0.0.1/24 dev tun0
 sudo ip link set dev tun0 up
 ```
 
-### 2. 루트 권한 필요
+### 3. 권한 설정
 - TUN 디바이스 액세스를 위해 루트 권한이 필요합니다
-- 또는 `CAP_NET_ADMIN` 권한을 부여하세요
+- 또는 `CAP_NET_ADMIN` 권한을 부여하세요:
+```bash
+# 실행 파일에 CAP_NET_ADMIN 권한 부여
+sudo setcap cap_net_admin+ep ./vpn-mitm-proxy
+```
 
-### 3. 루트 CA 인증서 설치 (선택사항)
+### 4. 루트 CA 인증서 설치 (선택사항)
 HTTPS MITM을 위해 클라이언트에 루트 CA 인증서를 설치할 수 있습니다.
+
+## 문제 해결
+
+### TUN 디바이스 읽기 에러
+"Failed to read from TUN device: read /dev/net/tun: not pollable" 에러가 발생하는 경우:
+
+1. **TUN 모듈 확인**:
+   ```bash
+   lsmod | grep tun
+   sudo modprobe tun
+   ```
+
+2. **권한 확인**:
+   ```bash
+   ls -la /dev/net/tun
+   sudo chmod 666 /dev/net/tun
+   ```
+
+3. **기존 TUN 인터페이스 정리**:
+   ```bash
+   sudo ip tuntap del dev tun0 mode tun
+   ```
+
+4. **프로그램을 루트 권한으로 실행**:
+   ```bash
+   sudo ./vpn-mitm-proxy
+   ```
 
 ## 기술적 특징
 

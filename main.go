@@ -2,11 +2,12 @@ package main
 
 import (
 	"flag"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	. "vpn-mitm-proxy/internal/global"
 	"vpn-mitm-proxy/internal/proxy"
 )
 
@@ -20,50 +21,65 @@ func main() {
 		logFile        = flag.String("log-file", "", "Log file path (empty for console)")
 		trafficLogFile = flag.String("traffic-log", "", "Traffic log file path")
 		certCacheSize  = flag.Int("cert-cache", 1000, "Certificate cache size")
-		maxConns       = flag.Int("max-conns", 10000, "Maximum concurrent connections")
 	)
 	flag.Parse()
 
-	log.Println("Starting VPN MITM Proxy...")
-
-	config := &proxy.Config{
-		TUNInterface:   *tunInterface,
-		HTTPPort:       *httpPort,
-		HTTPSPort:      *httpsPort,
-		LogLevel:       *logLevel,
-		LogFile:        *logFile,
-		TrafficLogFile: *trafficLogFile,
-		CertCacheSize:  *certCacheSize,
-		MaxConnections: *maxConns,
+	// 전역 로거 초기화
+	if err := InitLogger(*logLevel, *logFile); err != nil {
+		println("Failed to initialize global logger:", err)
+		os.Exit(1)
 	}
 
-	mitm, err := proxy.NewMITMProxy(config)
-	if err != nil {
-		log.Fatalf("Failed to create MITM proxy: %v", err)
+	// 전역 로거 사용
+	Info("Starting VPN MITM Proxy...")
+
+	config := proxy.Config{
+		TUNInterface:  *tunInterface,
+		HTTPPort:      *httpPort,
+		HTTPSPort:     *httpsPort,
+		LogLevel:      *logLevel,
+		CertCacheSize: *certCacheSize,
+		CertValidity:  24 * time.Hour,
+		KeySize:       2048,
 	}
+
+	mitm := proxy.NewMITMProxy(config, nil)
 
 	if err := mitm.Start(); err != nil {
-		log.Fatalf("Failed to start MITM proxy: %v", err)
+		Error("Failed to start MITM proxy: %v", err)
+		os.Exit(1)
 	}
 
 	// 시작 정보 출력
-	log.Printf("Configuration:")
-	log.Printf("  TUN Interface: %s", *tunInterface)
-	log.Printf("  HTTP Port: %d", *httpPort)
-	log.Printf("  HTTPS Port: %d", *httpsPort)
-	log.Printf("  Log Level: %s", *logLevel)
+	Info("Configuration:")
+	Info("  TUN Interface: %s", *tunInterface)
+	Info("  HTTP Port: %d", *httpPort)
+	Info("  HTTPS Port: %d", *httpsPort)
+	Info("  Log Level: %s", *logLevel)
 	if *logFile != "" {
-		log.Printf("  Log File: %s", *logFile)
+		Info("  Log File: %s", *logFile)
 	}
 	if *trafficLogFile != "" {
-		log.Printf("  Traffic Log: %s", *trafficLogFile)
+		Info("  Traffic Log: %s", *trafficLogFile)
 	}
 
-	// 우아한 종료 처리
+	// 루트 CA 인증서 출력
+	rootCAPEM, err := mitm.GetRootCAPEM()
+	if err != nil {
+		Warn("Failed to get root CA: %v", err)
+	} else {
+		Info("Root CA Certificate (add this to your system's trusted certificates):")
+		Info("-----BEGIN CERTIFICATE-----")
+		Info("%s", string(rootCAPEM))
+		Info("-----END CERTIFICATE-----")
+	}
+
+	// graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
 
-	log.Println("Shutting down VPN MITM Proxy...")
+	Info("Shutting down VPN MITM Proxy...")
 	mitm.Stop()
+	Close()
 }

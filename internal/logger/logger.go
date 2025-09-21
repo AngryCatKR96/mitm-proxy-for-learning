@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -95,7 +96,8 @@ func (l *Logger) log(level LogLevel, format string, args ...interface{}) {
 
 	timestamp := time.Now().Format("2006-01-02 15:04:05.000")
 	message := fmt.Sprintf(format, args...)
-	logLine := fmt.Sprintf("[%s] [%s] %s", timestamp, level.String(), message)
+	goroutineID := runtime.NumGoroutine()
+	logLine := fmt.Sprintf("[%s] [%s] [G%d] %s", timestamp, level.String(), goroutineID, message)
 
 	if level >= ERROR {
 		l.errorLog.Println(logLine)
@@ -127,9 +129,8 @@ func (l *Logger) Close() error {
 	return nil
 }
 
-// HTTPTrafficLogger는 HTTP/HTTPS 트래픽을 위한 전문 로깅을 제공합니다
+// HTTPTrafficLogger HTTP/HTTPS 트래픽을 위한 로거
 type HTTPTrafficLogger struct {
-	logger     *Logger
 	trafficLog *log.Logger
 	file       *os.File
 	mutex      sync.Mutex

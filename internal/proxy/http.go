@@ -10,16 +10,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	. "vpn-mitm-proxy/internal/global"
 )
 
 type HTTPProxy struct {
-	logger Logger
 }
 
 func NewHTTPProxy(logger Logger) *HTTPProxy {
-	return &HTTPProxy{
-		logger: logger,
-	}
+	return &HTTPProxy{}
 }
 
 func (h *HTTPProxy) HandleConnection(clientConn net.Conn) {
@@ -35,13 +34,13 @@ func (h *HTTPProxy) HandleConnection(clientConn net.Conn) {
 		req, err := http.ReadRequest(reader)
 		if err != nil {
 			if err != io.EOF {
-				h.logger.Error("Failed to read HTTP request: %v", err)
+				Error("Failed to read HTTP request: %v", err)
 			}
 			return
 		}
 
-		h.logger.Info("HTTP Request: %s %s", req.Method, req.URL.String())
-		h.logHTTPRequest(req)
+		Info("HTTP Request: %s %s", req.Method, req.URL.String())
+		h.LogHTTPRequest(req)
 
 		// HTTPS 터널링을 위한 CONNECT 메서드 처리
 		if req.Method == "CONNECT" {
@@ -50,9 +49,9 @@ func (h *HTTPProxy) HandleConnection(clientConn net.Conn) {
 		}
 
 		// 일반 HTTP 요청 처리
-		err = h.handleHTTPRequest(clientConn, req)
+		err = h.HandleHTTPRequest(clientConn, req)
 		if err != nil {
-			h.logger.Error("Failed to handle HTTP request: %v", err)
+			Error("Failed to handle HTTP request: %v", err)
 			return
 		}
 
@@ -63,7 +62,7 @@ func (h *HTTPProxy) HandleConnection(clientConn net.Conn) {
 	}
 }
 
-func (h *HTTPProxy) handleHTTPRequest(clientConn net.Conn, req *http.Request) error {
+func (h *HTTPProxy) HandleHTTPRequest(clientConn net.Conn, req *http.Request) error {
 	// 대상 URL 파싱
 	targetURL := req.URL
 	if targetURL.Scheme == "" {
@@ -73,8 +72,18 @@ func (h *HTTPProxy) handleHTTPRequest(clientConn net.Conn, req *http.Request) er
 		targetURL.Host = req.Host
 	}
 
+	// 포트가 없으면 기본 포트 추가
+	host := targetURL.Host
+	if !strings.Contains(host, ":") {
+		if targetURL.Scheme == "https" {
+			host = host + ":443"
+		} else {
+			host = host + ":80"
+		}
+	}
+
 	// 대상 서버에 연결 생성
-	targetConn, err := net.DialTimeout("tcp", targetURL.Host, 10*time.Second)
+	targetConn, err := net.DialTimeout("tcp", host, 10*time.Second)
 	if err != nil {
 		// 클라이언트에 오류 응답 전송
 		resp := &http.Response{
@@ -104,7 +113,7 @@ func (h *HTTPProxy) handleHTTPRequest(clientConn net.Conn, req *http.Request) er
 	}
 	defer resp.Body.Close()
 
-	h.logger.Info("HTTP Response: %d %s", resp.StatusCode, resp.Status)
+	Info("HTTP Response: %d %s", resp.StatusCode, resp.Status)
 	h.logHTTPResponse(resp)
 
 	// 응답을 클라이언트로 전달
@@ -117,12 +126,12 @@ func (h *HTTPProxy) handleHTTPRequest(clientConn net.Conn, req *http.Request) er
 }
 
 func (h *HTTPProxy) handleConnect(clientConn net.Conn, req *http.Request) {
-	h.logger.Info("CONNECT request to: %s", req.Host)
+	Info("CONNECT request to: %s", req.Host)
 
 	// 대상 서버에 연결 생성
 	targetConn, err := net.DialTimeout("tcp", req.Host, 10*time.Second)
 	if err != nil {
-		h.logger.Error("Failed to connect to target server: %v", err)
+		Error("Failed to connect to target server: %v", err)
 		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
 		return
 	}
@@ -160,42 +169,49 @@ func (h *HTTPProxy) shouldKeepAlive(req *http.Request) bool {
 	return connection == "keep-alive"
 }
 
-func (h *HTTPProxy) logHTTPRequest(req *http.Request) {
-	h.logger.Info("--- HTTP Request ---")
-	h.logger.Info("Method: %s", req.Method)
-	h.logger.Info("URL: %s", req.URL.String())
-	h.logger.Info("Proto: %s", req.Proto)
-	h.logger.Info("Host: %s", req.Host)
+func (h *HTTPProxy) LogHTTPRequest(req *http.Request) {
+	Info("--- HTTP Request ---")
+	Info("Method: %s", req.Method)
+	Info("URL: %s", req.URL.String())
+	Info("Proto: %s", req.Proto)
+	Info("Host: %s", req.Host)
 
 	// 헤더 로깅
 	for name, values := range req.Header {
 		for _, value := range values {
-			h.logger.Info("Header: %s: %s", name, value)
+			Info("Header: %s: %s", name, value)
 		}
 	}
 
-	// 특정 메서드의 본문 로깅 (큰 본문은 제외)
-	if req.Method == "POST" || req.Method == "PUT" || req.Method == "PATCH" {
-		if req.ContentLength > 0 && req.ContentLength < 1024 {
-			body, err := io.ReadAll(req.Body)
-			if err == nil {
-				h.logger.Info("Body: %s", string(body))
-				// 전달을 위해 본문 복원
-				req.Body = io.NopCloser(strings.NewReader(string(body)))
-			}
+	// 모든 요청의 본문 로깅 (큰 본문은 제외)
+	Info("Content-Length: %d", req.ContentLength)
+
+	// 본문이 있는지 확인하고 읽기
+	body, err := io.ReadAll(req.Body)
+	if err == nil && len(body) > 0 {
+		if len(body) < 10240 { // 10KB 제한
+			Info("Request Body: %s", string(body))
+		} else {
+			Info("Request Body: [TOO LARGE - %d bytes]", len(body))
 		}
+		// 전달을 위해 본문 복원
+		req.Body = io.NopCloser(strings.NewReader(string(body)))
+	} else {
+		Info("Request Body: [EMPTY or ERROR: %v]", err)
 	}
+
+	Info("--- End HTTP Request ---")
 }
 
 func (h *HTTPProxy) logHTTPResponse(resp *http.Response) {
-	h.logger.Info("--- HTTP Response ---")
-	h.logger.Info("Status: %d %s", resp.StatusCode, resp.Status)
-	h.logger.Info("Proto: %s", resp.Proto)
+	Info("--- HTTP Response ---")
+	Info("Status: %d %s", resp.StatusCode, resp.Status)
+	Info("Proto: %s", resp.Proto)
 
 	// 헤더 로깅
 	for name, values := range resp.Header {
 		for _, value := range values {
-			h.logger.Info("Header: %s: %s", name, value)
+			Info("Header: %s: %s", name, value)
 		}
 	}
 
@@ -203,14 +219,28 @@ func (h *HTTPProxy) logHTTPResponse(resp *http.Response) {
 	contentType := resp.Header.Get("Content-Type")
 	contentLength := resp.Header.Get("Content-Length")
 	if contentType != "" {
-		h.logger.Info("Content-Type: %s", contentType)
+		Info("Content-Type: %s", contentType)
 	}
 	if contentLength != "" {
-		h.logger.Info("Content-Length: %s", contentLength)
+		Info("Content-Length: %s", contentLength)
 	}
+
+	// 응답 본문 로깅 (큰 본문은 제외)
+	if resp.ContentLength > 0 && resp.ContentLength < 10240 { // 10KB 제한
+		body, err := io.ReadAll(resp.Body)
+		if err == nil && len(body) > 0 {
+			Info("Response Body: %s", string(body))
+			// 전달을 위해 본문 복원
+			resp.Body = io.NopCloser(strings.NewReader(string(body)))
+		}
+	} else if resp.ContentLength > 0 {
+		Info("Response Body: [TOO LARGE - %d bytes]", resp.ContentLength)
+	}
+
+	Info("--- End HTTP Response ---")
 }
 
-// HTTPRequestInfo는 가로챈 HTTP 요청에 대한 정보를 담습니다
+// HTTPRequestInfo HTTPRequestInfo는 가로챈 HTTP 요청에 대한 정보를 담습니다
 type HTTPRequestInfo struct {
 	Method    string
 	URL       *url.URL
@@ -221,7 +251,7 @@ type HTTPRequestInfo struct {
 	UserAgent string
 }
 
-// HTTPResponseInfo는 가로챈 HTTP 응답에 대한 정보를 담습니다
+// HTTPResponseInfo HTTPResponseInfo는 가로챈 HTTP 응답에 대한 정보를 담습니다
 type HTTPResponseInfo struct {
 	StatusCode    int
 	Status        string

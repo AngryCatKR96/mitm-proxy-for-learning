@@ -1,6 +1,7 @@
 # VPN MITM Proxy
 
-WireGuard VPN 환경에서 HTTP/HTTPS 트래픽을 가로채고 분석하는 MITM(Man-in-the-Middle) 프록시 서버입니다.
+vpn proxy 동작을 학습용으로 개발한 WireGuard VPN 환경에서 HTTP/HTTPS 트래픽을 가로채고 분석하는 MITM(Man-in-the-Middle) 프록시 서버입니다.
+(현재 WireGuard 트래픽을 가로채는 기능이 미완성 상태입니다.)
 
 ## 1. 프로젝트 빌드 및 실행 방법
 
